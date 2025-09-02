@@ -1,13 +1,20 @@
 import { useEffect, useState } from 'react';
 import { audioEngine } from '../audioEngine';
 
-type Props = {
+type MetronomeProps = {
   bpm: number;
   durationSec: number;
   isEnabled: boolean;
 };
 
-export function Metronome({ bpm, durationSec, isEnabled }: Props) {
+/**
+ * Metronome component that provides timing reference for recording
+ * @param bpm - Beats per minute for the metronome
+ * @param durationSec - Duration in seconds for the metronome playback
+ * @param isEnabled - Whether the metronome controls are enabled
+ * @returns Metronome control component
+ */
+export function Metronome({ bpm, durationSec, isEnabled }: MetronomeProps) {
   const [isOn, setIsOn] = useState(false);
 
   useEffect(() => {
@@ -27,6 +34,4 @@ export function Metronome({ bpm, durationSec, isEnabled }: Props) {
 }
 
 export default Metronome;
-
-
 

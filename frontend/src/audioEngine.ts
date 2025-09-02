@@ -1,10 +1,19 @@
-import { Track, EngineEvent } from './types';
+import type { Track, EngineEvent } from './types';
 
+/**
+ * Audio engine class that manages audio playback, metronome, and track scheduling
+ */
 export class AudioEngine {
   private audioContext: AudioContext | null = null;
   private eventListeners: Array<(event: EngineEvent) => void> = [];
   private masterGainNode: GainNode | null = null;
   private metronomeGainNode: GainNode | null = null;
+  private monitoringGainNode: GainNode | null = null;
+  private microphoneSource: MediaStreamAudioSourceNode | null = null;
+  private microphoneGainNode: GainNode | null = null;
+  private microphoneSensitivityNode: GainNode | null = null;
+  private microphoneDestination: MediaStreamAudioDestinationNode | null = null;
+  private processedMicrophoneStream: MediaStream | null = null;
   private scheduledMetronomeNodes: Array<AudioBufferSourceNode | OscillatorNode> = [];
   private scheduledTrackNodes: Array<AudioBufferSourceNode> = [];
 
@@ -16,16 +25,32 @@ export class AudioEngine {
   private metronomeSchedulerId: number | null = null;
   private readonly lookaheadMs: number = 25;
   private readonly scheduleAheadSec: number = 0.1;
+  private metronomeVolume: number = 0.7;
+  private microphoneSensitivity: number = 1.0;
 
+  /**
+   * Ensures audio context is initialized and returns it
+   * @returns The audio context instance
+   */
   ensureContext(): AudioContext {
     if (this.audioContext) return this.audioContext;
     const context = new (window.AudioContext || (window as any).webkitAudioContext)();
     this.audioContext = context;
+    
+    // Master output for monitoring (headphones/speakers)
     this.masterGainNode = context.createGain();
     this.masterGainNode.connect(context.destination);
+    
+    // Metronome chain
     this.metronomeGainNode = context.createGain();
-    this.metronomeGainNode.gain.value = 0.35;
+    this.metronomeGainNode.gain.value = this.metronomeVolume;
     this.metronomeGainNode.connect(this.masterGainNode);
+    
+    // Microphone monitoring chain
+    this.microphoneGainNode = context.createGain();
+    this.microphoneGainNode.gain.value = 0.8; // Monitoring volume
+    this.microphoneGainNode.connect(this.masterGainNode);
+    
     return context;
   }
 
@@ -85,6 +110,10 @@ export class AudioEngine {
     }
   }
 
+  /**
+   * Starts the metronome with specified BPM
+   * @param bpm - Beats per minute for the metronome
+   */
   async startMetronome(bpm: number): Promise<void> {
     const ctx = this.ensureContext();
     await this.resume();
@@ -171,14 +200,142 @@ export class AudioEngine {
      }
    }
 
+   /**
+    * Sets metronome BPM in real-time, adjusting the next beat timing
+    * @param bpm - New beats per minute value
+    */
    setMetronomeBpm(bpm: number) {
-     this.metronomeBpm = Math.max(1, bpm);
+     const newBpm = Math.max(1, bpm);
+     if (newBpm === this.metronomeBpm) return;
+     
+     if (this.metronomeOn && this.audioContext) {
+       // Calculate how much time has passed since the last scheduled beat
+       const oldSecondsPerBeat = 60 / this.metronomeBpm;
+       const newSecondsPerBeat = 60 / newBpm;
+       const currentTime = this.audioContext.currentTime;
+       
+       // Adjust the next note timing to maintain rhythm continuity
+       const timeSinceLastBeat = currentTime - (this.metronomeNextNoteTime - oldSecondsPerBeat);
+       const progressInBeat = Math.min(timeSinceLastBeat / oldSecondsPerBeat, 1);
+       
+       // Schedule next beat based on progress in current beat with new tempo
+       this.metronomeNextNoteTime = currentTime + (1 - progressInBeat) * newSecondsPerBeat;
+     }
+     
+     this.metronomeBpm = newBpm;
    }
 
    setMasterGain(value: number) {
      const ctx = this.ensureContext();
      void ctx; // keep reference consistent
      if (this.masterGainNode) this.masterGainNode.gain.value = value;
+   }
+
+   /**
+    * Sets the metronome volume level
+    * @param volume - Volume level between 0 and 1
+    */
+   setMetronomeVolume(volume: number): void {
+     this.metronomeVolume = Math.max(0, Math.min(1, volume));
+     if (this.metronomeGainNode) {
+       this.metronomeGainNode.gain.value = this.metronomeVolume;
+     }
+   }
+
+   /**
+    * Gets the current metronome volume level
+    * @returns Current volume level between 0 and 1
+    */
+   getMetronomeVolume(): number {
+     return this.metronomeVolume;
+   }
+
+   /**
+    * Sets up microphone monitoring and processing for recording
+    * @param stream - MediaStream from getUserMedia
+    * @returns Processed MediaStream with applied sensitivity
+    */
+   setupMicrophoneMonitoring(stream: MediaStream): MediaStream {
+     const ctx = this.ensureContext();
+     
+     if (this.microphoneSource) {
+       this.microphoneSource.disconnect();
+     }
+     
+     // Create microphone source
+     this.microphoneSource = ctx.createMediaStreamSource(stream);
+     
+     // Create sensitivity gain node for microphone input
+     if (!this.microphoneSensitivityNode) {
+       this.microphoneSensitivityNode = ctx.createGain();
+       this.microphoneSensitivityNode.gain.value = this.microphoneSensitivity;
+     }
+     
+     // Create destination for processed stream (for recording)
+     if (!this.microphoneDestination) {
+       this.microphoneDestination = ctx.createMediaStreamDestination();
+     }
+     
+     // Connect: Microphone → Sensitivity → [Split]
+     this.microphoneSource.connect(this.microphoneSensitivityNode);
+     
+     // Branch 1: To monitoring (what you hear)
+     this.microphoneSensitivityNode.connect(this.microphoneGainNode!);
+     
+     // Branch 2: To recording destination (what gets recorded)
+     this.microphoneSensitivityNode.connect(this.microphoneDestination);
+     
+     // Return the processed stream for MediaRecorder
+     this.processedMicrophoneStream = this.microphoneDestination.stream;
+     return this.processedMicrophoneStream;
+   }
+
+   /**
+    * Stops microphone monitoring
+    */
+   stopMicrophoneMonitoring(): void {
+     if (this.microphoneSource) {
+       this.microphoneSource.disconnect();
+       this.microphoneSource = null;
+     }
+     if (this.microphoneSensitivityNode) {
+       this.microphoneSensitivityNode.disconnect();
+       this.microphoneSensitivityNode = null;
+     }
+     if (this.microphoneDestination) {
+       this.microphoneDestination.disconnect();
+       this.microphoneDestination = null;
+     }
+     this.processedMicrophoneStream = null;
+   }
+
+   /**
+    * Sets microphone monitoring volume
+    * @param volume - Volume level between 0 and 1
+    */
+   setMicrophoneVolume(volume: number): void {
+     if (this.microphoneGainNode) {
+       this.microphoneGainNode.gain.value = Math.max(0, Math.min(1, volume));
+     }
+   }
+
+   /**
+    * Sets microphone input sensitivity (gain)
+    * @param sensitivity - Sensitivity level between 0.1 and 3.0
+    */
+   setMicrophoneSensitivity(sensitivity: number): void {
+     this.microphoneSensitivity = Math.max(0.1, Math.min(3.0, sensitivity));
+     if (this.microphoneSensitivityNode) {
+       this.microphoneSensitivityNode.gain.value = this.microphoneSensitivity;
+     }
+   }
+
+   /**
+    * Gets the current microphone sensitivity level
+    * @returns Current sensitivity level between 0.1 and 3.0
+    */
+   getMicrophoneSensitivity(): number {
+     return this.microphoneSensitivity;
    }
 }
 

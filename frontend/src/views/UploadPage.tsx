@@ -67,22 +67,23 @@ export function UploadPage() {
   };
 
   return (
-    <div style={{ display: 'grid', placeItems: 'center', minHeight: '100vh', width: '100%', padding: '20px', boxSizing: 'border-box' }}>
-      <div style={{ position: 'fixed', top: 16, right: 16 }}>
+    <div id="upload-page" style={{ display: 'grid', placeItems: 'center', minHeight: '100vh', width: '100%', padding: '20px', boxSizing: 'border-box' }}>
+      <div id="upload-theme-toggle" style={{ position: 'fixed', top: 16, right: 16 }}>
         <ThemeToggle />
       </div>
       
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 'clamp(20px, 4vw, 30px)', maxWidth: 'clamp(300px, 90vw, 600px)', width: '100%' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'clamp(8px, 2vw, 12px)', flexWrap: 'wrap', justifyContent: 'center' }}>
-          <button onClick={() => window.history.back()}>← Назад</button>
-          <h2 style={{ margin: 0, fontSize: 'clamp(18px, 4vw, 24px)' }}>Загрузка аудио</h2>
+      <div id="upload-main-container" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 'clamp(20px, 4vw, 30px)', maxWidth: 'clamp(300px, 90vw, 600px)', width: '100%' }}>
+        <div id="upload-header" style={{ display: 'flex', alignItems: 'center', gap: 'clamp(8px, 2vw, 12px)', flexWrap: 'wrap', justifyContent: 'center' }}>
+          <button id="upload-back-button" onClick={() => window.history.back()}>← Назад</button>
+          <h2 id="upload-page-title" style={{ margin: 0, fontSize: 'clamp(18px, 4vw, 24px)' }}>Загрузка аудио</h2>
         </div>
 
         {/* File Upload Area */}
-        <div className="card" style={{ width: '100%', textAlign: 'center' }}>
-          <h3 style={{ margin: '0 0 16px 0', fontSize: 'clamp(16px, 3vw, 20px)' }}>Выберите аудио файл</h3>
+        <div id="file-upload-section" className="card" style={{ width: '100%', textAlign: 'center' }}>
+          <h3 id="file-upload-title" style={{ margin: '0 0 16px 0', fontSize: 'clamp(16px, 3vw, 20px)' }}>Выберите аудио файл</h3>
           
           <div
+            id="file-drop-zone"
             style={{
               border: `2px dashed ${isDragOver ? 'var(--link)' : 'var(--border)'}`,
               borderRadius: '12px',
@@ -96,15 +97,16 @@ export function UploadPage() {
             onDrop={handleDrop}
             onClick={handleUploadClick}
           >
-            <div style={{ fontSize: 'clamp(14px, 3vw, 18px)', marginBottom: '12px' }}>
+            <div id="drop-zone-text" style={{ fontSize: 'clamp(14px, 3vw, 18px)', marginBottom: '12px' }}>
               🎵 Перетащите аудио файл сюда или кликните для выбора
             </div>
-            <div style={{ fontSize: 'clamp(12px, 2.5vw, 14px)', opacity: 0.7 }}>
+            <div id="supported-formats" style={{ fontSize: 'clamp(12px, 2.5vw, 14px)', opacity: 0.7 }}>
               Поддерживаемые форматы: MP3, WAV, OGG, M4A
             </div>
           </div>
 
           <input
+            id="hidden-file-input"
             ref={fileInputRef}
             type="file"
             accept="audio/*"
@@ -113,6 +115,7 @@ export function UploadPage() {
           />
 
           <button
+            id="select-file-button"
             onClick={handleUploadClick}
             style={{
               marginTop: '16px',
@@ -131,26 +134,27 @@ export function UploadPage() {
 
         {/* File Info and Playback */}
         {uploadedFile && (
-          <div className="card" style={{ width: '100%', textAlign: 'center' }}>
-            <h3 style={{ margin: '0 0 16px 0', fontSize: 'clamp(16px, 3vw, 20px)' }}>Загруженный файл</h3>
+          <div id="uploaded-file-section" className="card" style={{ width: '100%', textAlign: 'center' }}>
+            <h3 id="uploaded-file-title" style={{ margin: '0 0 16px 0', fontSize: 'clamp(16px, 3vw, 20px)' }}>Загруженный файл</h3>
             
-            <div style={{ marginBottom: '20px', textAlign: 'left' }}>
-              <div style={{ marginBottom: '8px' }}>
+            <div id="file-info" style={{ marginBottom: '20px', textAlign: 'left' }}>
+              <div id="file-name" style={{ marginBottom: '8px' }}>
                 <strong>Название:</strong> {uploadedFile.name}
               </div>
-              <div style={{ marginBottom: '8px' }}>
+              <div id="file-size" style={{ marginBottom: '8px' }}>
                 <strong>Размер:</strong> {formatFileSize(uploadedFile.size)}
               </div>
-              <div style={{ marginBottom: '8px' }}>
+              <div id="file-type" style={{ marginBottom: '8px' }}>
                 <strong>Тип:</strong> {uploadedFile.type || 'Неизвестно'}
               </div>
-              <div>
+              <div id="file-date">
                 <strong>Дата:</strong> {new Date(uploadedFile.lastModified).toLocaleDateString()}
               </div>
             </div>
 
-            <div style={{ display: 'flex', gap: 'clamp(12px, 3vw, 20px)', justifyContent: 'center', flexWrap: 'wrap' }}>
+            <div id="file-actions" style={{ display: 'flex', gap: 'clamp(12px, 3vw, 20px)', justifyContent: 'center', flexWrap: 'wrap' }}>
               <button
+                id="play-uploaded-file"
                 onClick={playAudio}
                 style={{
                   padding: 'clamp(12px, 3vw, 16px) clamp(24px, 4vw, 32px)',
@@ -166,6 +170,7 @@ export function UploadPage() {
               </button>
               
               <button
+                id="remove-uploaded-file"
                 onClick={() => setUploadedFile(null)}
                 style={{
                   padding: 'clamp(12px, 3vw, 16px) clamp(24px, 4vw, 32px)',

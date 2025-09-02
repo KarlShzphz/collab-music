@@ -1,6 +1,11 @@
 import { useEffect, useState } from 'react';
 import type { Track } from './types';
 
+/**
+ * Custom hook to manage audio buffer decoding for tracks
+ * @param tracks - Array of track objects to decode
+ * @returns Object containing isDecoding state
+ */
 export function useAudioBuffers(tracks: Track[]) {
   const [isDecoding, setIsDecoding] = useState(false);
 

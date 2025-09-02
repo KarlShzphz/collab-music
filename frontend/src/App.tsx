@@ -1,15 +1,19 @@
 import { useEffect, useState } from 'react'
 import './App.css'
 import type { Track } from './types'
-import { useAudioBuffers } from './hooks'
+// import { useAudioBuffers } from './hooks' // Reserved for future use
 import Home from './views/Home'
 import RecordUpload from './views/RecordUpload'
 import Search from './views/Search'
 
+/**
+ * Main application component that handles routing and track management
+ * @returns The main app component with route-based rendering
+ */
 function App() {
-  const [bpm, setBpm] = useState(120)
-  const [tracks, setTracks] = useState<Array<Track>>([])
-  const { isDecoding } = useAudioBuffers(tracks)
+  // const [bpm, setBpm] = useState(120) // Reserved for future use
+  // const [tracks, setTracks] = useState<Array<Track>>([]) // Reserved for future use
+  // const { isDecoding } = useAudioBuffers(tracks) // Reserved for future use
   const [route, setRoute] = useState<'home' | 'recordUpload' | 'search'>('home')
 
   useEffect(() => {
@@ -37,29 +41,36 @@ function App() {
     }
   }
 
-  function addTrack(t: Track) {
-    setTracks((prev) => [...prev, t])
-  }
+  // Reserved for future use - track management functions
+  // function addTrack(t: Track) {
+  //   setTracks((prev) => [...prev, t])
+  // }
 
-  function updateOffset(id: string, offset: number) {
-    setTracks((prev) => prev.map((t) => (t.id === id ? { ...t, offsetSec: offset } : t)))
-  }
+  // function updateOffset(id: string, offset: number) {
+  //   setTracks((prev) => prev.map((t) => (t.id === id ? { ...t, offsetSec: offset } : t)))
+  // }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
+    <div id="app" style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
       {route === 'home' && (
-        <Home
-          goToRecordUpload={() => navigateTo('recordUpload')}
-          goToSearch={() => navigateTo('search')}
-        />
+        <div id="home-route">
+          <Home
+            goToRecordUpload={() => navigateTo('recordUpload')}
+            goToSearch={() => navigateTo('search')}
+          />
+        </div>
       )}
 
       {route === 'recordUpload' && (
-        <RecordUpload />
+        <div id="record-upload-route">
+          <RecordUpload />
+        </div>
       )}
 
       {route === 'search' && (
-        <Search goHome={() => navigateTo('home')} />
+        <div id="search-route">
+          <Search goHome={() => navigateTo('home')} />
+        </div>
       )}
     </div>
   )
