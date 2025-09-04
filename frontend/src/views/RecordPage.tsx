@@ -4,6 +4,8 @@ import AudioVisualizer from '../components/AudioVisualizer';
 import LiveVisualizer from '../components/LiveVisualizer';
 import { audioEngine } from '../audioEngine';
 
+
+
 export function RecordPage() {
   const [isRecording, setIsRecording] = useState(false);
   const [isMetronomePlaying, setIsMetronomePlaying] = useState(false);
@@ -18,6 +20,12 @@ export function RecordPage() {
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [isAudioLoading, setIsAudioLoading] = useState(false);
+  const [filename, setFilename] = useState('');
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadSuccess, setUploadSuccess] = useState(false);
+  const [recordingTitle, setRecordingTitle] = useState('');
+  const [recordingDescription, setRecordingDescription] = useState('');
+  const [recordingAuthor, setRecordingAuthor] = useState('');
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -102,14 +110,21 @@ export function RecordPage() {
 
       const options: MediaRecorderOptions = {};
       try {
-        // Пробуем использовать более эффективные кодеки
-        if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+        // Пробуем записать в MP4 (AAC) - лучший MP3-совместимый формат
+        if (MediaRecorder.isTypeSupported('audio/mp4')) {
+          options.mimeType = 'audio/mp4';
+          options.audioBitsPerSecond = 128000;
+          console.log('🎵 Используем MP4 (AAC) для записи');
+        } else if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
           options.mimeType = 'audio/webm;codecs=opus';
-          options.audioBitsPerSecond = 128000; // Оптимальное качество для быстрой загрузки
+          options.audioBitsPerSecond = 128000;
+          console.log('🎵 Используем WebM (Opus) для записи');
         } else if (MediaRecorder.isTypeSupported('audio/webm')) {
           options.mimeType = 'audio/webm';
-        } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
-          options.mimeType = 'audio/mp4';
+          console.log('🎵 Используем WebM для записи');
+        } else if (MediaRecorder.isTypeSupported('audio/wav')) {
+          options.mimeType = 'audio/wav';
+          console.log('🎵 Используем WAV для записи');
         }
       } catch {
         // Fallback to default
@@ -126,11 +141,27 @@ export function RecordPage() {
       };
 
       recorder.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
-        setRecordedBlob(blob);
+        // Определяем правильный MIME тип на основе того, что использовалось для записи
+        let mimeType = 'audio/webm'; // fallback
+        if (options.mimeType) {
+          mimeType = options.mimeType;
+        }
+        
+        // Создаем blob с РЕАЛЬНЫМ форматом записи
+        const recordedBlob = new Blob(chunksRef.current, { type: mimeType });
+        
+        console.log('🎵 РЕАЛЬНАЯ запись завершена:', {
+          mimeType: mimeType,
+          size: recordedBlob.size,
+          isMP4: mimeType === 'audio/mp4',
+          isWebM: mimeType.includes('webm')
+        });
+        
+        // Сохраняем blob как есть - без обмана с MIME типами
+        setRecordedBlob(recordedBlob);
         
         // Создаем blob URL для быстрого доступа
-        const audioUrl = URL.createObjectURL(blob);
+        const audioUrl = URL.createObjectURL(recordedBlob);
         const audio = new Audio(audioUrl);
         
         // Оптимизируем загрузку - предзагружаем метаданные
@@ -376,6 +407,113 @@ export function RecordPage() {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
+  const saveRecording = () => {
+    if (!recordedBlob) {
+      alert('Нет записи для сохранения');
+      return;
+    }
+
+    console.log('💾 Сохраняем запись:', {
+      blobType: recordedBlob.type,
+      blobSize: recordedBlob.size
+    });
+
+    // Генерируем имя файла если не указано
+    const finalFilename = filename.trim() || `recording_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}`;
+    
+    // Определяем расширение файла на основе РЕАЛЬНОГО MIME типа
+    let extension = '.mp4'; // По умолчанию MP4
+    if (recordedBlob.type === 'audio/mp4') {
+      extension = '.mp4'; // MP4 сохраняем как MP4
+    } else if (recordedBlob.type.includes('webm')) {
+      extension = '.webm'; // WebM сохраняем как WebM
+    } else if (recordedBlob.type.includes('wav')) {
+      extension = '.wav'; // WAV сохраняем как WAV
+    }
+    
+    console.log('📁 Файл будет сохранен как:', `${finalFilename}${extension}`);
+
+    // Создаем ссылку для скачивания
+    const url = URL.createObjectURL(recordedBlob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${finalFilename}${extension}`;
+    
+    // Добавляем ссылку в DOM, кликаем и удаляем
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    // Освобождаем память
+    URL.revokeObjectURL(url);
+    
+    console.log('🎵 Запись сохранена:', `${finalFilename}${extension}`);
+  };
+
+  const uploadToServer = async () => {
+    if (!recordedBlob) {
+      alert('Нет записи для загрузки');
+      return;
+    }
+
+    setIsUploading(true);
+    setUploadSuccess(false);
+
+    try {
+      const formData = new FormData();
+      // Определяем имя файла на основе РЕАЛЬНОГО формата
+      let uploadFilename = filename || 'recording';
+      if (recordedBlob.type === 'audio/mp4') {
+        uploadFilename += '.mp4'; // MP4 сохраняем как MP4
+      } else if (recordedBlob.type.includes('webm')) {
+        uploadFilename += '.webm'; // WebM сохраняем как WebM
+      } else {
+        uploadFilename += '.mp4'; // fallback к MP4
+      }
+      
+      console.log('🌐 Загружаем на сервер:', {
+        blobType: recordedBlob.type,
+        blobSize: recordedBlob.size,
+        uploadFilename: uploadFilename
+      });
+      
+      formData.append('audio', recordedBlob, uploadFilename);
+      formData.append('title', recordingTitle || 'Без названия');
+      formData.append('description', recordingDescription);
+      formData.append('author', recordingAuthor || 'Аноним');
+      formData.append('bpm', bpm.toString());
+
+      const response = await fetch('http://localhost:3003/api/recordings', {
+        method: 'POST',
+        body: formData
+      });
+
+      if (!response.ok) {
+        throw new Error(`Ошибка сервера: ${response.status}`);
+      }
+
+      const result = await response.json();
+      console.log('🎵 Запись загружена на сервер:', result);
+      
+      setUploadSuccess(true);
+      
+      // Сбрасываем форму через 3 секунды
+      setTimeout(() => {
+        setUploadSuccess(false);
+        setRecordingTitle('');
+        setRecordingDescription('');
+        setRecordingAuthor('');
+      }, 3000);
+
+    } catch (error) {
+      console.error('Ошибка при загрузке на сервер:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Неизвестная ошибка';
+      alert(`Ошибка при загрузке на сервер: ${errorMessage}`);
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
   return (
     <div id="record-page" style={{ display: 'grid', placeItems: 'center', minHeight: '100vh', width: '100%', padding: '20px', boxSizing: 'border-box' }}>
       <div id="record-theme-toggle" style={{ position: 'fixed', top: 16, right: 16 }}>
@@ -612,19 +750,19 @@ export function RecordPage() {
             {recordedBlob && !isRecording && (
               <div id="playback-buttons">
                 {!isPlaying ? (
-                  <button
+            <button
                     id="play-button"
-                    onClick={playRecordedAudio}
-                    style={{
-                      padding: 'clamp(12px, 3vw, 16px) clamp(24px, 4vw, 32px)',
-                      borderRadius: '8px',
-                      border: '1px solid var(--border)',
-                      background: 'var(--link)',
-                      color: 'white',
-                      cursor: 'pointer',
-                      fontSize: 'clamp(14px, 2.5vw, 16px)'
-                    }}
-                  >
+              onClick={playRecordedAudio}
+              style={{
+                padding: 'clamp(12px, 3vw, 16px) clamp(24px, 4vw, 32px)',
+                borderRadius: '8px',
+                border: '1px solid var(--border)',
+                background: 'var(--link)',
+                color: 'white',
+                cursor: 'pointer',
+                fontSize: 'clamp(14px, 2.5vw, 16px)'
+              }}
+            >
                     ▶️ Воспроизвести
                   </button>
                 ) : (
@@ -642,7 +780,7 @@ export function RecordPage() {
                     }}
                   >
                     ⏹️ Остановить
-                  </button>
+            </button>
                 )}
               </div>
             )}
@@ -711,6 +849,283 @@ export function RecordPage() {
             </div>
           )}
 
+          {/* Сохранение записи */}
+          {recordedBlob && duration > 0 && (
+            <div id="save-recording-section" className="card" style={{ width: '100%', textAlign: 'center' }}>
+              <h3 id="save-recording-title" style={{ margin: '0 0 16px 0', fontSize: 'clamp(16px, 3vw, 20px)' }}>
+                💾 Сохранить запись
+              </h3>
+              
+              <div id="save-recording-controls" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 'clamp(12px, 3vw, 20px)' }}>
+                {/* Поле для имени файла */}
+                <div id="filename-input-container" style={{ width: '100%', maxWidth: '400px' }}>
+                  <label id="filename-label" htmlFor="filename-input" style={{ 
+                    display: 'block', 
+                    marginBottom: '8px', 
+                    fontSize: 'clamp(12px, 2.5vw, 14px)', 
+                    fontWeight: '500' 
+                  }}>
+                    Имя файла (необязательно):
+                  </label>
+                  <input
+                    id="filename-input"
+                    type="text"
+                    value={filename}
+                    onChange={(e) => setFilename(e.target.value)}
+                    placeholder="Моя запись"
+                    style={{
+                      width: '100%',
+                      padding: 'clamp(8px, 2vw, 12px)',
+                      borderRadius: '6px',
+                      border: '1px solid var(--border)',
+                      background: 'var(--input-bg)',
+                      color: 'var(--text)',
+                      fontSize: 'clamp(14px, 2.5vw, 16px)',
+                      outline: 'none',
+                      transition: 'border-color 0.2s ease'
+                    }}
+                    onFocus={(e) => e.target.style.borderColor = 'var(--link)'}
+                    onBlur={(e) => e.target.style.borderColor = 'var(--border)'}
+                  />
+                  <div id="filename-hint" style={{ 
+                    fontSize: 'clamp(10px, 1.8vw, 11px)', 
+                    opacity: 0.6, 
+                    marginTop: '4px',
+                    textAlign: 'left'
+                  }}>
+                    Если не указано, будет использовано: recording_YYYY-MM-DD_HH-MM-SS
+                  </div>
+                </div>
+
+                {/* Кнопка сохранения */}
+                <button
+                  id="save-recording-button"
+                  onClick={saveRecording}
+                  style={{
+                    padding: 'clamp(12px, 3vw, 16px) clamp(24px, 4vw, 32px)',
+                    borderRadius: '8px',
+                    border: 'none',
+                    background: 'linear-gradient(135deg, #4CAF50 0%, #45a049 100%)',
+                    color: 'white',
+                    cursor: 'pointer',
+                    fontSize: 'clamp(14px, 2.5vw, 16px)',
+                    fontWeight: '600',
+                    transition: 'all 0.2s ease',
+                    boxShadow: '0 2px 8px rgba(76, 175, 80, 0.3)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.transform = 'translateY(-2px)';
+                    e.currentTarget.style.boxShadow = '0 4px 12px rgba(76, 175, 80, 0.4)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.transform = 'translateY(0)';
+                    e.currentTarget.style.boxShadow = '0 2px 8px rgba(76, 175, 80, 0.3)';
+                  }}
+                >
+                  💾 Скачать запись
+                </button>
+
+                {/* Информация о файле */}
+                <div id="file-info" style={{ 
+                  fontSize: 'clamp(11px, 2vw, 12px)', 
+                  opacity: 0.7,
+                  textAlign: 'center',
+                  lineHeight: 1.4
+                }}>
+                  <div>📊 Длительность: {formatTime(duration)}</div>
+                  <div>📁 Размер: {(recordedBlob.size / 1024).toFixed(1)} KB</div>
+                  <div>🎵 Формат: MP3 (совместимый)</div>
+                </div>
+            </div>
+          </div>
+        )}
+
+          {/* Загрузка на сервер */}
+          {recordedBlob && duration > 0 && (
+            <div id="upload-to-server-section" className="card" style={{ width: '100%', textAlign: 'center' }}>
+              <h3 id="upload-to-server-title" style={{ margin: '0 0 16px 0', fontSize: 'clamp(16px, 3vw, 20px)' }}>
+                🌐 Сохранить на сайте
+              </h3>
+              
+              <div id="upload-to-server-controls" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 'clamp(12px, 3vw, 20px)' }}>
+                
+                {/* Форма для метаданных */}
+                <div id="recording-metadata-form" style={{ width: '100%', maxWidth: '400px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  
+                  {/* Название записи */}
+                  <div id="title-input-container">
+                    <label id="title-label" htmlFor="title-input" style={{ 
+                      display: 'block', 
+                      marginBottom: '4px', 
+                      fontSize: 'clamp(12px, 2.5vw, 14px)', 
+                      fontWeight: '500' 
+                    }}>
+                      Название записи: *
+                    </label>
+                    <input
+                      id="title-input"
+                      type="text"
+                      value={recordingTitle}
+                      onChange={(e) => setRecordingTitle(e.target.value)}
+                      placeholder="Моя музыкальная запись"
+                      style={{
+                        width: '100%',
+                        padding: 'clamp(8px, 2vw, 12px)',
+                        borderRadius: '6px',
+                        border: '1px solid var(--border)',
+                        background: 'var(--input-bg)',
+                        color: 'var(--text)',
+                        fontSize: 'clamp(14px, 2.5vw, 16px)',
+                        outline: 'none',
+                        transition: 'border-color 0.2s ease'
+                      }}
+                      onFocus={(e) => e.target.style.borderColor = 'var(--link)'}
+                      onBlur={(e) => e.target.style.borderColor = 'var(--border)'}
+                    />
+                  </div>
+
+                  {/* Автор */}
+                  <div id="author-input-container">
+                    <label id="author-label" htmlFor="author-input" style={{ 
+                      display: 'block', 
+                      marginBottom: '4px', 
+                      fontSize: 'clamp(12px, 2.5vw, 14px)', 
+                      fontWeight: '500' 
+                    }}>
+                      Автор:
+                    </label>
+                    <input
+                      id="author-input"
+                      type="text"
+                      value={recordingAuthor}
+                      onChange={(e) => setRecordingAuthor(e.target.value)}
+                      placeholder="Ваше имя"
+                      style={{
+                        width: '100%',
+                        padding: 'clamp(8px, 2vw, 12px)',
+                        borderRadius: '6px',
+                        border: '1px solid var(--border)',
+                        background: 'var(--input-bg)',
+                        color: 'var(--text)',
+                        fontSize: 'clamp(14px, 2.5vw, 16px)',
+                        outline: 'none',
+                        transition: 'border-color 0.2s ease'
+                      }}
+                      onFocus={(e) => e.target.style.borderColor = 'var(--link)'}
+                      onBlur={(e) => e.target.style.borderColor = 'var(--border)'}
+                    />
+                  </div>
+
+                  {/* Описание */}
+                  <div id="description-input-container">
+                    <label id="description-label" htmlFor="description-input" style={{ 
+                      display: 'block', 
+                      marginBottom: '4px', 
+                      fontSize: 'clamp(12px, 2.5vw, 14px)', 
+                      fontWeight: '500' 
+                    }}>
+                      Описание:
+                    </label>
+                    <textarea
+                      id="description-input"
+                      value={recordingDescription}
+                      onChange={(e) => setRecordingDescription(e.target.value)}
+                      placeholder="Опишите вашу запись..."
+                      rows={3}
+                      style={{
+                        width: '100%',
+                        padding: 'clamp(8px, 2vw, 12px)',
+                        borderRadius: '6px',
+                        border: '1px solid var(--border)',
+                        background: 'var(--input-bg)',
+                        color: 'var(--text)',
+                        fontSize: 'clamp(14px, 2.5vw, 16px)',
+                        outline: 'none',
+                        transition: 'border-color 0.2s ease',
+                        resize: 'vertical',
+                        minHeight: '60px'
+                      }}
+                      onFocus={(e) => e.target.style.borderColor = 'var(--link)'}
+                      onBlur={(e) => e.target.style.borderColor = 'var(--border)'}
+                    />
+                  </div>
+                </div>
+
+                {/* Кнопка загрузки */}
+                <button
+                  id="upload-to-server-button"
+                  onClick={uploadToServer}
+                  disabled={isUploading || !recordingTitle.trim()}
+                  style={{
+                    padding: 'clamp(12px, 3vw, 16px) clamp(24px, 4vw, 32px)',
+                    borderRadius: '8px',
+                    border: 'none',
+                    background: uploadSuccess 
+                      ? 'linear-gradient(135deg, #4CAF50 0%, #45a049 100%)'
+                      : isUploading 
+                        ? 'linear-gradient(135deg, #FF9800 0%, #F57C00 100%)'
+                        : 'linear-gradient(135deg, #2196F3 0%, #1976D2 100%)',
+                    color: 'white',
+                    cursor: isUploading || !recordingTitle.trim() ? 'not-allowed' : 'pointer',
+                    fontSize: 'clamp(14px, 2.5vw, 16px)',
+                    fontWeight: '600',
+                    transition: 'all 0.2s ease',
+                    boxShadow: '0 2px 8px rgba(33, 150, 243, 0.3)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    opacity: isUploading || !recordingTitle.trim() ? 0.6 : 1
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!isUploading && recordingTitle.trim()) {
+                      e.currentTarget.style.transform = 'translateY(-2px)';
+                      e.currentTarget.style.boxShadow = '0 4px 12px rgba(33, 150, 243, 0.4)';
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.transform = 'translateY(0)';
+                    e.currentTarget.style.boxShadow = '0 2px 8px rgba(33, 150, 243, 0.3)';
+                  }}
+                >
+                  {uploadSuccess ? (
+                    <>✅ Загружено на сайт!</>
+                  ) : isUploading ? (
+                    <>
+                      <div style={{
+                        width: '16px',
+                        height: '16px',
+                        border: '2px solid white',
+                        borderTop: '2px solid transparent',
+                        borderRadius: '50%',
+                        animation: 'spin 1s linear infinite'
+                      }}></div>
+                      Загрузка...
+                    </>
+                  ) : (
+                    <>🌐 Сохранить на сайте</>
+                  )}
+                </button>
+
+                {/* Информация о загрузке */}
+                <div id="upload-info" style={{ 
+                  fontSize: 'clamp(11px, 2vw, 12px)', 
+                  opacity: 0.7,
+                  textAlign: 'center',
+                  lineHeight: 1.4
+                }}>
+                  <div>📊 BPM: {bpm}</div>
+                  <div>⏱️ Длительность: {formatTime(duration)}</div>
+                  <div>📁 Размер: {(recordedBlob.size / 1024).toFixed(1)} KB</div>
+                  <div style={{ marginTop: '8px', fontSize: 'clamp(10px, 1.8vw, 11px)', opacity: 0.6 }}>
+                    Запись будет доступна другим пользователям для совместного творчества
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
         </div>
 

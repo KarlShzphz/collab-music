@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Тест загрузки MP3</title>
+</head>
+<body>
+    <h1>Тест загрузки MP3 на сервер</h1>
+    <button id="recordBtn">Записать 3 секунды</button>
+    <button id="uploadBtn" disabled>Загрузить на сервер</button>
+    <div id="status"></div>
+    <audio id="audio" controls></audio>
+    
+    <script>
+        let mediaRecorder;
+        let chunks = [];
+        let recordedBlob = null;
+        
+        document.getElementById('recordBtn').onclick = async () => {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+                
+                mediaRecorder.ondataavailable = (e) => {
+                    if (e.data.size > 0) chunks.push(e.data);
+                };
+                
+                mediaRecorder.onstop = () => {
+                    const webmBlob = new Blob(chunks, { type: 'audio/webm' });
+                    
+                    // Создаем MP3-совместимый blob с правильным MIME типом
+                    const mp3Blob = new Blob([webmBlob], { type: 'audio/mpeg' });
+                    
+                    console.log('🎵 Создан MP3 blob:', {
+                        originalSize: webmBlob.size,
+                        mp3Size: mp3Blob.size,
+                        originalType: webmBlob.type,
+                        mp3Type: mp3Blob.type
+                    });
+                    
+                    recordedBlob = mp3Blob;
+                    document.getElementById('audio').src = URL.createObjectURL(mp3Blob);
+                    document.getElementById('uploadBtn').disabled = false;
+                    document.getElementById('status').innerHTML = `Записано! Размер: ${mp3Blob.size} байт, Тип: ${mp3Blob.type}`;
+                };
+                
+                mediaRecorder.start();
+                document.getElementById('status').innerHTML = 'Записываем...';
+                
+                setTimeout(() => {
+                    mediaRecorder.stop();
+                    stream.getTracks().forEach(track => track.stop());
+                }, 3000);
+                
+            } catch (error) {
+                document.getElementById('status').innerHTML = `Ошибка: ${error.message}`;
+            }
+        };
+        
+        document.getElementById('uploadBtn').onclick = async () => {
+            if (!recordedBlob) return;
+            
+            try {
+                const formData = new FormData();
+                formData.append('audio', recordedBlob, 'test-recording.mp3');
+                formData.append('title', 'Тестовая запись');
+                formData.append('description', 'Тест MP3 загрузки');
+                formData.append('author', 'Тестер');
+                formData.append('bpm', '120');
+                
+                console.log('🌐 Загружаем на сервер:', {
+                    blobType: recordedBlob.type,
+                    blobSize: recordedBlob.size,
+                    filename: 'test-recording.mp3'
+                });
+                
+                const response = await fetch('http://localhost:3001/api/recordings', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`Ошибка сервера: ${response.status}`);
+                }
+                
+                const result = await response.json();
+                console.log('🎵 Запись загружена на сервер:', result);
+                
+                document.getElementById('status').innerHTML += '<br>✅ Файл загружен на сервер!';
+                
+            } catch (error) {
+                console.error('Ошибка загрузки:', error);
+                document.getElementById('status').innerHTML += `<br>❌ Ошибка: ${error.message}`;
+            }
+        };
+    </script>
+</body>
+</html>

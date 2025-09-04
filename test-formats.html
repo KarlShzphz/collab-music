@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Тест поддержки форматов</title>
+</head>
+<body>
+    <h1>Тест поддержки форматов записи</h1>
+    <div id="results"></div>
+    <button id="testBtn">Тестировать форматы</button>
+    <button id="recordBtn" disabled>Записать в лучшем формате</button>
+    <div id="status"></div>
+    <audio id="audio" controls></audio>
+    
+    <script>
+        let bestFormat = null;
+        
+        document.getElementById('testBtn').onclick = () => {
+            const formats = [
+                'audio/mp4',
+                'audio/webm;codecs=opus',
+                'audio/webm',
+                'audio/wav',
+                'audio/ogg;codecs=opus',
+                'audio/ogg'
+            ];
+            
+            const results = document.getElementById('results');
+            results.innerHTML = '<h2>Поддерживаемые форматы:</h2>';
+            
+            formats.forEach(format => {
+                const supported = MediaRecorder.isTypeSupported(format);
+                const color = supported ? 'green' : 'red';
+                const status = supported ? '✅ Поддерживается' : '❌ Не поддерживается';
+                
+                results.innerHTML += `<div style="color: ${color}">${format}: ${status}</div>`;
+                
+                if (supported && !bestFormat) {
+                    bestFormat = format;
+                }
+            });
+            
+            if (bestFormat) {
+                results.innerHTML += `<h3>🎵 Лучший формат: ${bestFormat}</h3>`;
+                document.getElementById('recordBtn').disabled = false;
+            } else {
+                results.innerHTML += '<h3>❌ Ни один формат не поддерживается</h3>';
+            }
+        };
+        
+        document.getElementById('recordBtn').onclick = async () => {
+            if (!bestFormat) return;
+            
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                const mediaRecorder = new MediaRecorder(stream, { 
+                    mimeType: bestFormat,
+                    audioBitsPerSecond: 128000
+                });
+                
+                const chunks = [];
+                mediaRecorder.ondataavailable = (e) => {
+                    if (e.data.size > 0) chunks.push(e.data);
+                };
+                
+                mediaRecorder.onstop = () => {
+                    const blob = new Blob(chunks, { type: bestFormat });
+                    
+                    // Создаем MP3-совместимый blob
+                    const mp3Blob = new Blob([blob], { type: 'audio/mpeg' });
+                    
+                    document.getElementById('audio').src = URL.createObjectURL(mp3Blob);
+                    document.getElementById('status').innerHTML = `
+                        <strong>Записано!</strong><br>
+                        Формат: ${bestFormat}<br>
+                        Размер: ${blob.size} байт<br>
+                        MP3 размер: ${mp3Blob.size} байт<br>
+                        MP3 тип: ${mp3Blob.type}
+                    `;
+                    
+                    // Создаем ссылку для скачивания
+                    const url = URL.createObjectURL(mp3Blob);
+                    const link = document.createElement('a');
+                    link.href = url;
+                    link.download = 'test-recording.mp3';
+                    link.textContent = 'Скачать MP3';
+                    link.style.display = 'block';
+                    link.style.marginTop = '10px';
+                    document.getElementById('status').appendChild(link);
+                };
+                
+                mediaRecorder.start();
+                document.getElementById('status').innerHTML = 'Записываем 3 секунды...';
+                
+                setTimeout(() => {
+                    mediaRecorder.stop();
+                    stream.getTracks().forEach(track => track.stop());
+                }, 3000);
+                
+            } catch (error) {
+                document.getElementById('status').innerHTML = `Ошибка: ${error.message}`;
+            }
+        };
+    </script>
+</body>
+</html>

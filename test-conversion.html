@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Тест конвертации WebM в MP3</title>
+</head>
+<body>
+    <h1>Тест конвертации аудио</h1>
+    <button id="testBtn">Записать и конвертировать</button>
+    <div id="status"></div>
+    <audio id="audio" controls></audio>
+    
+    <script>
+        let mediaRecorder;
+        let chunks = [];
+        
+        document.getElementById('testBtn').onclick = async () => {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+                
+                mediaRecorder.ondataavailable = (e) => {
+                    if (e.data.size > 0) chunks.push(e.data);
+                };
+                
+                mediaRecorder.onstop = async () => {
+                    const webmBlob = new Blob(chunks, { type: 'audio/webm' });
+                    document.getElementById('status').innerHTML = `WebM записан: ${webmBlob.size} байт<br>`;
+                    
+                    // Тестируем конвертацию
+                    try {
+                        const mp3Blob = await convertWebMToMP3(webmBlob);
+                        document.getElementById('status').innerHTML += `MP3 конвертирован: ${mp3Blob.size} байт<br>`;
+                        document.getElementById('audio').src = URL.createObjectURL(mp3Blob);
+                    } catch (error) {
+                        document.getElementById('status').innerHTML += `Ошибка конвертации: ${error.message}`;
+                    }
+                };
+                
+                mediaRecorder.start();
+                document.getElementById('status').innerHTML = 'Записываем...';
+                
+                setTimeout(() => {
+                    mediaRecorder.stop();
+                    stream.getTracks().forEach(track => track.stop());
+                }, 3000);
+                
+            } catch (error) {
+                document.getElementById('status').innerHTML = `Ошибка: ${error.message}`;
+            }
+        };
+        
+        // Функция конвертации (копия из RecordPage.tsx)
+        async function convertWebMToMP3(webmBlob) {
+            return new Promise((resolve, reject) => {
+                try {
+                    const audio = new Audio();
+                    const audioUrl = URL.createObjectURL(webmBlob);
+                    audio.src = audioUrl;
+                    
+                    audio.onloadedmetadata = () => {
+                        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                        const source = audioContext.createMediaElementSource(audio);
+                        const destination = audioContext.createMediaStreamDestination();
+                        source.connect(destination);
+                        
+                        let mimeType = 'audio/webm';
+                        if (MediaRecorder.isTypeSupported('audio/mp4')) {
+                            mimeType = 'audio/mp4';
+                        } else if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+                            mimeType = 'audio/webm;codecs=opus';
+                        }
+                        
+                        const recorder = new MediaRecorder(destination.stream, {
+                            mimeType,
+                            audioBitsPerSecond: 128000
+                        });
+                        
+                        const chunks = [];
+                        recorder.ondataavailable = (e) => {
+                            if (e.data.size > 0) chunks.push(e.data);
+                        };
+                        
+                        recorder.onstop = () => {
+                            const mp3Blob = new Blob(chunks, { type: 'audio/mpeg' });
+                            URL.revokeObjectURL(audioUrl);
+                            resolve(mp3Blob);
+                        };
+                        
+                        recorder.onerror = (e) => {
+                            console.error('Ошибка конвертации:', e);
+                            URL.revokeObjectURL(audioUrl);
+                            reject(new Error('Ошибка конвертации аудио'));
+                        };
+                        
+                        recorder.start();
+                        audio.play();
+                        
+                        audio.onended = () => {
+                            recorder.stop();
+                        };
+                    };
+                    
+                    audio.onerror = () => {
+                        URL.revokeObjectURL(audioUrl);
+                        reject(new Error('Ошибка загрузки аудио для конвертации'));
+                    };
+                    
+                } catch (error) {
+                    reject(error);
+                }
+            });
+        }
+    </script>
+</body>
+</html>

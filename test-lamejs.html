@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Тест конвертации WebM в MP3 с LameJS</title>
+    <script src="https://cdn.jsdelivr.net/npm/lamejs@1.2.1/lame.min.js"></script>
+</head>
+<body>
+    <h1>Тест конвертации WebM в MP3 с LameJS</h1>
+    <button id="recordBtn">Записать 3 секунды</button>
+    <button id="convertBtn" disabled>Конвертировать в MP3</button>
+    <button id="saveBtn" disabled>Сохранить MP3</button>
+    <div id="status"></div>
+    <audio id="audio" controls></audio>
+    
+    <script>
+        let mediaRecorder;
+        let chunks = [];
+        let recordedBlob = null;
+        let mp3Blob = null;
+        
+        document.getElementById('recordBtn').onclick = async () => {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+                
+                mediaRecorder.ondataavailable = (e) => {
+                    if (e.data.size > 0) chunks.push(e.data);
+                };
+                
+                mediaRecorder.onstop = () => {
+                    recordedBlob = new Blob(chunks, { type: 'audio/webm' });
+                    document.getElementById('audio').src = URL.createObjectURL(recordedBlob);
+                    document.getElementById('convertBtn').disabled = false;
+                    document.getElementById('status').innerHTML = `Записано! Размер: ${recordedBlob.size} байт, Тип: ${recordedBlob.type}`;
+                };
+                
+                mediaRecorder.start();
+                document.getElementById('status').innerHTML = 'Записываем...';
+                
+                setTimeout(() => {
+                    mediaRecorder.stop();
+                    stream.getTracks().forEach(track => track.stop());
+                }, 3000);
+                
+            } catch (error) {
+                document.getElementById('status').innerHTML = `Ошибка: ${error.message}`;
+            }
+        };
+        
+        document.getElementById('convertBtn').onclick = async () => {
+            if (!recordedBlob) return;
+            
+            try {
+                document.getElementById('status').innerHTML = 'Конвертируем в MP3...';
+                
+                // Создаем аудио контекст для декодирования WebM
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const arrayBuffer = await recordedBlob.arrayBuffer();
+                const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+                
+                // Получаем PCM данные
+                const leftChannel = audioBuffer.getChannelData(0);
+                const rightChannel = audioBuffer.numberOfChannels > 1 ? audioBuffer.getChannelData(1) : leftChannel;
+                
+                // Конвертируем в MP3 с помощью LameJS
+                const mp3encoder = new lamejs.Mp3Encoder(2, audioBuffer.sampleRate, 128);
+                const mp3Data = [];
+                
+                const blockSize = 1152;
+                for (let i = 0; i < leftChannel.length; i += blockSize) {
+                    const leftChunk = leftChannel.subarray(i, i + blockSize);
+                    const rightChunk = rightChannel.subarray(i, i + blockSize);
+                    const mp3buf = mp3encoder.encodeBuffer(leftChunk, rightChunk);
+                    if (mp3buf.length > 0) {
+                        mp3Data.push(mp3buf);
+                    }
+                }
+                
+                const mp3buf = mp3encoder.flush();
+                if (mp3buf.length > 0) {
+                    mp3Data.push(mp3buf);
+                }
+                
+                mp3Blob = new Blob(mp3Data, { type: 'audio/mpeg' });
+                
+                document.getElementById('saveBtn').disabled = false;
+                document.getElementById('status').innerHTML = `✅ Конвертировано! MP3 размер: ${mp3Blob.size} байт`;
+                
+            } catch (error) {
+                console.error('Ошибка конвертации:', error);
+                document.getElementById('status').innerHTML = `❌ Ошибка конвертации: ${error.message}`;
+            }
+        };
+        
+        document.getElementById('saveBtn').onclick = () => {
+            if (!mp3Blob) return;
+            
+            const url = URL.createObjectURL(mp3Blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = 'converted-recording.mp3';
+            
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            
+            URL.revokeObjectURL(url);
+            
+            document.getElementById('status').innerHTML += '<br>✅ MP3 файл сохранен!';
+        };
+    </script>
+</body>
+</html>
