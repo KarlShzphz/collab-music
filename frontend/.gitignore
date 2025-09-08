@@ -22,7 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-.backend/uploads/
+#.backend/uploads/
 
 # Cursor rules
 .cursor/rules/
