@@ -190,7 +190,7 @@ export function Search({ goHome }: Props) {
                   <div>📁 Размер: {((t as any).size / 1024).toFixed(1)} KB</div>
                   <div>📅 Загружено: {new Date((t as any).uploadDate).toLocaleDateString('ru-RU')}</div>
                   {(t as any).url && (
-                    <div style={{ marginTop: '4px' }}>
+                    <div style={{ marginTop: '4px', display: 'flex', gap: '8px' }}>
                       <button 
                         onClick={() => window.open(`http://localhost:3003${(t as any).url}`, '_blank')}
                         style={{
@@ -204,6 +204,41 @@ export function Search({ goHome }: Props) {
                         }}
                       >
                         ▶️ Прослушать
+                      </button>
+                      <button 
+                        onClick={() => {
+                          // Передаем выбранную запись на страницу записи
+                          const selectedRecording = {
+                            id: (t as any).id,
+                            title: (t as any).title,
+                            description: (t as any).description,
+                            author: (t as any).author,
+                            bpm: (t as any).bpm,
+                            filename: (t as any).filename,
+                            originalName: (t as any).originalName,
+                            size: (t as any).size,
+                            mimetype: (t as any).mimetype,
+                            uploadDate: (t as any).uploadDate,
+                            url: (t as any).url
+                          };
+                          
+                          // Сохраняем в localStorage для передачи на RecordPage
+                          localStorage.setItem('selectedRecordingForOverdub', JSON.stringify(selectedRecording));
+                          
+                          // Переходим на страницу записи
+                          window.location.href = '/record';
+                        }}
+                        style={{
+                          background: '#4CAF50',
+                          color: 'white',
+                          border: 'none',
+                          padding: '4px 8px',
+                          borderRadius: '4px',
+                          fontSize: '10px',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        🎤 Записать поверх
                       </button>
                     </div>
                   )}

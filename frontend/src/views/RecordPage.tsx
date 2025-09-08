@@ -3,7 +3,7 @@ import ThemeToggle from '../components/ThemeToggle';
 import AudioVisualizer from '../components/AudioVisualizer';
 import LiveVisualizer from '../components/LiveVisualizer';
 import { audioEngine } from '../audioEngine';
-
+import type { Recording } from '../types';
 
 
 export function RecordPage() {
@@ -31,6 +31,14 @@ export function RecordPage() {
   const chunksRef = useRef<Blob[]>([]);
   const recordingTimerRef = useRef<number | null>(null);
   const playbackTimerRef = useRef<number | null>(null);
+  const [mixedPreviewBlob, setMixedPreviewBlob] = useState<Blob | null>(null);
+  // overdub state
+  const [selectedTrack, setSelectedTrack] = useState<Recording | null>(null);
+  const [isLoadingTrack, setIsLoadingTrack] = useState(false);
+  const [recordings, setRecordings] = useState<Recording[]>([]);
+  const [selectedTrackAudio, setSelectedTrackAudio] = useState<HTMLAudioElement | null>(null);
+  const [isPlayingSelectedTrack, setIsPlayingSelectedTrack] = useState(false);
+  
 
   const startMetronome = async () => {
     if (isMetronomePlaying) {
@@ -67,6 +75,75 @@ export function RecordPage() {
     }
   };
 
+  // WAV encoder
+  const audioBufferToBlob = async (buf: AudioBuffer): Promise<Blob> => {
+    const channels = buf.numberOfChannels, sampleRate = buf.sampleRate, length = buf.length;
+    const ab = new ArrayBuffer(44 + length * channels * 2);
+    const view = new DataView(ab);
+    const w = (o: number, s: string) => { for (let i = 0; i < s.length; i++) view.setUint8(o + i, s.charCodeAt(i)); };
+    w(0, 'RIFF'); view.setUint32(4, 36 + length * channels * 2, true); w(8, 'WAVE'); w(12, 'fmt ');
+    view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, channels, true);
+    view.setUint32(24, sampleRate, true); view.setUint32(28, sampleRate * channels * 2, true);
+    view.setUint16(32, channels * 2, true); view.setUint16(34, 16, true); w(36, 'data');
+    view.setUint32(40, length * channels * 2, true);
+    let off = 44;
+    for (let i = 0; i < length; i++) for (let ch = 0; ch < channels; ch++) {
+      const s = Math.max(-1, Math.min(1, buf.getChannelData(ch)[i]));
+      view.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7FFF, true); off += 2;
+    }
+    return new Blob([ab], { type: 'audio/wav' });
+  };
+
+  const mixRecordings = async (newRec: Blob, base: Recording): Promise<Blob> => {
+    const ctx = new AudioContext();
+    const baseBuf = await (await fetch(`http://localhost:3003${base.url}`)).arrayBuffer()
+      .then(b => ctx.decodeAudioData(b));
+    const newBuf = await newRec.arrayBuffer().then(b => ctx.decodeAudioData(b));
+    const len = Math.max(baseBuf.length, newBuf.length);
+    const out = ctx.createBuffer(Math.max(baseBuf.numberOfChannels, newBuf.numberOfChannels), len, baseBuf.sampleRate);
+    for (let ch = 0; ch < out.numberOfChannels; ch++) {
+      const o = out.getChannelData(ch);
+      const a = baseBuf.getChannelData(ch % baseBuf.numberOfChannels);
+      const b = newBuf.getChannelData(ch % newBuf.numberOfChannels);
+      for (let i = 0; i < len; i++) {
+        const s = (i < a.length ? a[i] : 0) + (i < b.length ? b[i] : 0);
+        o[i] = Math.max(-1, Math.min(1, s));
+      }
+    }
+    return audioBufferToBlob(out);
+  };
+
+  const loadRecordings = async () => {
+    try { setIsLoadingTrack(true);
+      const r = await fetch('http://localhost:3003/api/recordings'); const list = await r.json();
+      setRecordings(list); return list;
+    } finally { setIsLoadingTrack(false); }
+  };
+
+  const selectTrack = async (track: Recording) => {
+    console.log('🎵 Выбираем трек для записи поверх:', track);
+    setSelectedTrack(track);
+    if (selectedTrackAudio) { 
+      selectedTrackAudio.pause(); 
+      selectedTrackAudio.currentTime = 0; 
+    }
+    const a = new Audio(`http://localhost:3003${track.url}`); 
+    a.preload = 'metadata';
+    a.onplay = () => {
+      console.log('🎵 Базовый трек начал воспроизведение');
+      setIsPlayingSelectedTrack(true);
+    };
+    a.onpause = a.onended = () => {
+      console.log('🎵 Базовый трек остановлен');
+      setIsPlayingSelectedTrack(false);
+    };
+    setSelectedTrackAudio(a);
+    console.log('🎵 selectedTrackAudio создан:', a);
+  };
+
+  const playSelectedTrack = async () => { if (selectedTrackAudio) await selectedTrackAudio.play(); };
+  const stopSelectedTrack = () => { if (selectedTrackAudio) { selectedTrackAudio.pause(); selectedTrackAudio.currentTime = 0; } };
+
   // Cleanup only on component unmount
   useEffect(() => {
     return () => {
@@ -88,6 +165,8 @@ export function RecordPage() {
     };
   }, []); // Empty dependency array - runs only on mount/unmount
 
+  useEffect(() => { setMixedPreviewBlob(null); }, [selectedTrack]);
+  useEffect(() => { setMixedPreviewBlob(null); }, [recordedBlob]);
 
 
   const startRecording = async () => {
@@ -107,6 +186,22 @@ export function RecordPage() {
       const processedStream = audioEngine.setupMicrophoneMonitoring(stream);
       audioEngine.setMicrophoneVolume(microphoneVolume);
       audioEngine.setMicrophoneSensitivity(microphoneSensitivity);
+
+      // Воспроизводим выбранный трек при начале записи
+      console.log('🎵 Проверяем selectedTrackAudio при начале записи:', {
+        hasSelectedTrack: !!selectedTrack,
+        hasSelectedTrackAudio: !!selectedTrackAudio,
+        selectedTrackAudioSrc: selectedTrackAudio?.src
+      });
+      
+      if (selectedTrackAudio) {
+        console.log('🎵 Воспроизводим базовый трек при записи');
+        selectedTrackAudio.currentTime = 0;
+        selectedTrackAudio.play().catch(console.error);
+        setIsPlayingSelectedTrack(true);
+      } else {
+        console.log('❌ selectedTrackAudio не найден при начале записи');
+      }
 
       const options: MediaRecorderOptions = {};
       try {
@@ -282,6 +377,13 @@ export function RecordPage() {
     if (mediaRecorderRef.current && isRecording) {
       mediaRecorderRef.current.stop();
       
+      // Останавливаем базовый трек при остановке записи
+      if (selectedTrackAudio && !selectedTrackAudio.paused) {
+        console.log('🎵 Останавливаем базовый трек при остановке записи');
+        selectedTrackAudio.pause();
+        setIsPlayingSelectedTrack(false);
+      }
+      
       // Останавливаем таймер записи
       if (recordingTimerRef.current) {
         clearInterval(recordingTimerRef.current);
@@ -299,35 +401,50 @@ export function RecordPage() {
   };
 
   const playRecordedAudio = async () => {
-    if (recordedAudio) {
-      try {
-        // Показываем индикатор загрузки если аудио еще не готово
-        if (recordedAudio.readyState < 2) {
-          setIsAudioLoading(true);
+    if (!recordedBlob) return;
+
+    try {
+      setIsAudioLoading(true);
+
+      // 1) готовим микс (и кэшируем его)
+      let blobToPlay = recordedBlob;
+      if (selectedTrack) {
+        if (!mixedPreviewBlob) {
+          console.log('🎛️ Готовим МИКС для предпрослушивания…');
+          const mixed = await mixRecordings(recordedBlob, selectedTrack);
+          setMixedPreviewBlob(mixed);
+          blobToPlay = mixed;
+        } else {
+          blobToPlay = mixedPreviewBlob;
         }
-        
-        await recordedAudio.play();
-        setIsPlaying(true);
-        setIsAudioLoading(false);
-        
-        // Очищаем предыдущий таймер если есть
-        if (playbackTimerRef.current) {
-          clearInterval(playbackTimerRef.current);
-        }
-        
-        // Запускаем обновление позиции воспроизведения
-        playbackTimerRef.current = window.setInterval(() => {
-          if (recordedAudio && !recordedAudio.paused && !recordedAudio.ended) {
-            const time = recordedAudio.currentTime;
-            if (isFinite(time) && time >= 0) {
-              setCurrentTime(time);
-            }
-          }
-        }, 100);
-      } catch (error) {
-        console.error('Ошибка воспроизведения:', error);
-        setIsAudioLoading(false);
       }
+
+      // 2) создаём новый audio из нужного blob (микс/оригинал)
+      const url = URL.createObjectURL(blobToPlay);
+      const audio = new Audio(url);
+      audio.preload = 'auto';
+
+      audio.onloadedmetadata = () => {
+        setDuration(isFinite(audio.duration) ? audio.duration : 0);
+        setIsAudioLoading(false);
+      };
+      audio.onplay = () => {
+        setIsPlaying(true);
+        if (playbackTimerRef.current) clearInterval(playbackTimerRef.current);
+        playbackTimerRef.current = window.setInterval(() => {
+          if (!audio.paused && !audio.ended) setCurrentTime(audio.currentTime);
+        }, 100);
+      };
+      audio.onpause = audio.onended = () => {
+        setIsPlaying(false);
+        if (playbackTimerRef.current) { clearInterval(playbackTimerRef.current); playbackTimerRef.current = null; }
+      };
+
+      setRecordedAudio(audio);
+      await audio.play();
+    } catch (error) {
+      console.error('Ошибка воспроизведения:', error);
+      setIsAudioLoading(false);
     }
   };
 
@@ -407,47 +524,60 @@ export function RecordPage() {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const saveRecording = () => {
+  const saveRecording = async () => {
     if (!recordedBlob) {
       alert('Нет записи для сохранения');
       return;
     }
 
-    console.log('💾 Сохраняем запись:', {
-      blobType: recordedBlob.type,
-      blobSize: recordedBlob.size
-    });
+    try {
+      let finalBlob = mixedPreviewBlob ?? recordedBlob;
+      if (selectedTrack && !mixedPreviewBlob) {
+        console.log('🎛️ Кэша нет — считаем микс перед сохранением…');
+        finalBlob = await mixRecordings(recordedBlob, selectedTrack);
+        setMixedPreviewBlob(finalBlob);
+      }
+      
+      console.log('💾 Сохраняем запись:', {
+        blobType: finalBlob.type,
+        blobSize: finalBlob.size
+      });
 
-    // Генерируем имя файла если не указано
-    const finalFilename = filename.trim() || `recording_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}`;
-    
-    // Определяем расширение файла на основе РЕАЛЬНОГО MIME типа
-    let extension = '.mp4'; // По умолчанию MP4
-    if (recordedBlob.type === 'audio/mp4') {
-      extension = '.mp4'; // MP4 сохраняем как MP4
-    } else if (recordedBlob.type.includes('webm')) {
-      extension = '.webm'; // WebM сохраняем как WebM
-    } else if (recordedBlob.type.includes('wav')) {
-      extension = '.wav'; // WAV сохраняем как WAV
+      // Генерируем имя файла если не указано
+      const finalFilename = filename.trim() || `recording_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}`;
+      
+      // Определяем расширение файла на основе РЕАЛЬНОГО MIME типа
+      let extension = '.mp4'; // По умолчанию MP4
+      if (finalBlob.type === 'audio/mp4') {
+        extension = '.mp4'; // MP4 сохраняем как MP4
+      } else if (finalBlob.type.includes('webm')) {
+        extension = '.webm'; // WebM сохраняем как WebM
+      } else if (finalBlob.type.includes('wav')) {
+        extension = '.wav'; // WAV сохраняем как WAV
+      }
+      
+      console.log('📁 Файл будет сохранен как:', `${finalFilename}${extension}`);
+
+      // Создаем ссылку для скачивания
+      const url = URL.createObjectURL(finalBlob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${finalFilename}${extension}`;
+      
+      // Добавляем ссылку в DOM, кликаем и удаляем
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      // Освобождаем память
+      URL.revokeObjectURL(url);
+      
+      console.log('🎵 Запись сохранена:', `${finalFilename}${extension}`);
+      
+    } catch (error) {
+      console.error('Ошибка сохранения записи:', error);
+      alert('Ошибка при сохранении записи');
     }
-    
-    console.log('📁 Файл будет сохранен как:', `${finalFilename}${extension}`);
-
-    // Создаем ссылку для скачивания
-    const url = URL.createObjectURL(recordedBlob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `${finalFilename}${extension}`;
-    
-    // Добавляем ссылку в DOM, кликаем и удаляем
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    
-    // Освобождаем память
-    URL.revokeObjectURL(url);
-    
-    console.log('🎵 Запись сохранена:', `${finalFilename}${extension}`);
   };
 
   const uploadToServer = async () => {
@@ -513,6 +643,11 @@ export function RecordPage() {
       setIsUploading(false);
     }
   };
+
+  // Загружаем записи при монтировании компонента
+  useEffect(() => {
+    loadRecordings();
+  }, []);
 
   return (
     <div id="record-page" style={{ display: 'grid', placeItems: 'center', minHeight: '100vh', width: '100%', padding: '20px', boxSizing: 'border-box' }}>
@@ -1127,6 +1262,64 @@ export function RecordPage() {
             </div>
           )}
 
+        </div>
+
+        {/* Выбор трека для записи поверх */}
+        <div className="mb-6">
+          <h3 className="text-lg font-semibold mb-4">Выберите трек для записи поверх</h3>
+          {isLoadingTrack ? (
+            <div className="text-center py-4">Загрузка записей...</div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {recordings.map((track) => (
+                <div
+                  key={track.id}
+                  className={`p-4 border rounded-lg cursor-pointer transition-colors ${
+                    selectedTrack?.id === track.id
+                      ? 'border-blue-500 bg-blue-50'
+                      : 'border-gray-200 hover:border-gray-300'
+                  }`}
+                  onClick={() => selectTrack(track)}
+                >
+                  <h4 className="font-medium">{track.title}</h4>
+                  <p className="text-sm text-gray-600">{track.author}</p>
+                  <p className="text-xs text-gray-500">BPM: {track.bpm}</p>
+                  <p className="text-xs text-gray-500">
+                    {new Date(track.uploadDate).toLocaleDateString()}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
+          
+          {selectedTrack && (
+            <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+              <h4 className="font-medium text-blue-800">Выбранный трек:</h4>
+              <p className="text-blue-600">{selectedTrack.title} - {selectedTrack.author}</p>
+              <div className="mt-2 flex gap-2">
+                <button
+                  onClick={playSelectedTrack}
+                  disabled={isPlayingSelectedTrack}
+                  className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+                >
+                  ▶️ Воспроизвести
+                </button>
+                <button
+                  onClick={stopSelectedTrack}
+                  disabled={!isPlayingSelectedTrack}
+                  className="px-3 py-1 bg-gray-600 text-white rounded hover:bg-gray-700 disabled:opacity-50"
+                >
+                  ⏹️ Остановить
+                </button>
+                <button
+                  onClick={() => setSelectedTrack(null)}
+                  className="px-3 py-1 text-sm text-blue-600 hover:text-blue-800"
+                >
+                  ❌ Отменить выбор
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
 
