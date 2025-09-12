@@ -17,6 +17,7 @@ alwaysApply: true
     - Use descriptive variable names with auxiliary verbs (e.g., `isLoading`, `hasError`).
     - Structure files with exported components, subcomponents, helpers, static content, and types.
     - Use lowercase with dashes for directory names (e.g., `components/auth-wizard`).
+    - Every element on the web page must have an id.
 
     ### Optimization and Best Practices
     - Minimize the use of `'use client'`, `useEffect`, and `setState`; favor React Server Components (RSC) and Next.js SSR features.

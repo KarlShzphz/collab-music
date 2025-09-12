@@ -6,6 +6,7 @@ import UploadPage from './UploadPage';
 export function RecordUpload() {
   const [currentPage, setCurrentPage] = useState<'choice' | 'record' | 'upload'>('choice');
 
+
   if (currentPage === 'record') {
     return <RecordPage />;
   }
